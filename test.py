@@ -18,38 +18,35 @@ st.set_page_config(page_title="Location Uploader & PPTX Export", layout="wide")
 
 # --- 追加：JSで画面幅をクエリにセット ---
 components.html(
-    """
+     """
     <script>
       const w = window.innerWidth;
       const url = new URL(window.location);
-      url.searchParams.set("screen_width", w);
-      window.history.replaceState(null, '', url);
+      // すでに同じ値ならリロードしない
+      if (url.searchParams.get('screen_width') != w) {
+        url.searchParams.set('screen_width', w);
+        window.location.search = url.searchParams.toString();
+      }
     </script>
     """,
     height=0,
 )
 
+# 画面幅に応じたプレビュー列数の設定（3段階レスポンシブ）
+# 画面幅読み込み
+screen_w = int(st.query_params.get("screen_width", ["0"])[0])
 
-# クエリから画面幅を読み込み（初回は0なのでPC用5列をデフォルト）
-params   = st.query_params
-screen_w = int(params.get("screen_width", ["0"])[0])
+# screen_w が 0（まだ取得前）ならPC扱い
+if screen_w == 0 or screen_w >= 1200:
+    PREVIEW_COLS = 4
+elif screen_w >= 768:
+    PREVIEW_COLS = 4
+else:
+    PREVIEW_COLS = 4
 
-
-# スマホ基準を768pxとし、それ以下なら2列、超なら5列
-PREVIEW_COLS     = 2 if screen_w < 768 else 5
 PREVIEW_ROWS     = 2
 PREVIEW_PER_PAGE = PREVIEW_COLS * PREVIEW_ROWS
-
-# --- 全体のCSS調整 ---
-# ③ クエリパラメータ取得
-params = st.query_params
-screen_w = int(params.get("screen_width", [0])[0])
-
-# 以下は前回と同じレスポンシブ設定
-# スマホ基準を768pxとし、それ以下なら2列、超なら5列
-PREVIEW_COLS     = 2 if screen_w < 768 else 5
-PREVIEW_ROWS     = 2
-PREVIEW_PER_PAGE = PREVIEW_COLS * PREVIEW_ROWS
+PADDING          = 1
 
 # 全体のCSS調整
 st.markdown(
@@ -62,8 +59,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-
 
 # --- 定義しておく ---
 subcats = {
@@ -241,7 +236,7 @@ location_name = loc_name
 address = address
 
 # --- ユーザー入力：1スライドあたりの画像枚数を選択 ---
-# --- ユーザー入力：1スライドあたりの画像枚数 ---
+
 total_per_slide = st.selectbox(
     "1スライドあたりの画像枚数",
     [6, 9],
@@ -259,14 +254,13 @@ LOC_FONT     = Pt(20)   # ロケ地名
 TABLE_FONT   = Pt(10)   # 表の文字
 
 # --- プレビュー設定（変更なし）---
-PREVIEW_COLS, PREVIEW_ROWS = 5, 2
-PREVIEW_PER_PAGE = PREVIEW_COLS * PREVIEW_ROWS
-PADDING = 5
+
+
 
 # --- カテゴリ定義 ---
 # --- 6. 画像アップロード & Preview ---
 categories = [
-    ("サムネイル", "thumbs", False),
+    ("サムネイル：1枚のみ", "thumbs", False),
     ("ロケ地写真", "photos", True),
     ("アングル写真", "angles", True),
     ("その他設備・搬入搬出経路", "others", True),
@@ -326,31 +320,41 @@ for label, key, multi in categories:
         f"<div style='border:1px solid #ddd; padding:{PADDING}px; margin-bottom:{PADDING}px; max-height:400px; overflow-y:auto;'>",
         unsafe_allow_html=True,
     )
+
+    # ── プレビュー画像のループ（削除をチェックボックスで） ──
+    # ── プレビュー表示ループ（チェックボックスで「削除」と「資料出力」）──
     cols_ui = st.columns(PREVIEW_COLS)
     start = (page - 1) * PREVIEW_PER_PAGE
+
     for idx, (name, img) in enumerate(items[start:start + PREVIEW_PER_PAGE]):
         col = cols_ui[idx % PREVIEW_COLS]
         with col:
-            # ここが修正ポイント：use_container_width を使う
-            #st.image(img, use_container_width=True)
             display_image(img, use_container_width=True)
 
+            # 「資料出力」のチェック
+            inc = st.checkbox(
+                "資料出力",
+                key=f"inc_{key}_{name}",
+                value=st.session_state[f"{key}_include"][name]
+            )
+            st.session_state[f"{key}_include"][name] = inc
 
-            c1, c2 = st.columns([4,1])
-            with c1:
-                inc = st.checkbox("資料出力",
-                                  key=f"inc_{key}_{name}",
-                                  value=st.session_state[f"{key}_include"][name])
-                st.session_state[f"{key}_include"][name] = inc
-            with c2:
-                if st.button("❌", key=f"del_{key}_{name}"):
-                    data.pop(name)
-                    st.session_state[f"{key}_include"].pop(name, None)
-                    # ページ再計算＆リラン
-                    new_n = len(data)
-                    new_total = max(1, (new_n + PREVIEW_PER_PAGE - 1)//PREVIEW_PER_PAGE)
-                    st.session_state[f"{key}_page"] = min(page, new_total)
-                    st.rerun()
+            # 「削除」のチェックをオンにしたら即削除
+            delete = st.checkbox(
+                "削除",
+                key=f"del_{key}_{name}"
+            )
+            if delete:
+                data.pop(name)
+                st.session_state[f"{key}_include"].pop(name, None)
+                new_n     = len(data)
+                new_total = max(1, (new_n + PREVIEW_PER_PAGE - 1) // PREVIEW_PER_PAGE)
+                st.session_state[f"{key}_page"] = min(page, new_total)
+                st.rerun()
+
+
+
+
     st.markdown("</div>", unsafe_allow_html=True)
 
     # ページナビ
@@ -370,128 +374,232 @@ for label, key, multi in categories:
 # --- PPTX 生成＆ダウンロード ---
 if st.button("💾 PPTX を生成"):
     prs = Presentation()
-    prs.slide_width = Inches(13.333)
+    prs.slide_width  = Inches(13.333)
     prs.slide_height = Inches(7.5)
 
-    # --- サマリースライド ---
-    summary = prs.slides.add_slide(prs.slide_layouts[5])
+    # 共通：Blank レイアウト取得
+    try:
+        blank_layout = prs.slide_layouts[6]
+    except IndexError:
+        blank_layout = next(
+            (lay for lay in prs.slide_layouts if lay.name.lower()=="blank"),
+            prs.slide_layouts[5]
+        )
 
-    # (1) ロケ地名：中央寄せテキストボックス
-    tb_loc = summary.shapes.add_textbox(
-        Inches(1), Inches(0.3),
-        prs.slide_width - Inches(2), Inches(0.8)
+    # --- 1枚目：サムネイルスライド ---
+    thumb_slide = prs.slides.add_slide(blank_layout)
+    # 上部にロケ地名
+    TITLE_W = Inches(10)
+    left    = (prs.slide_width - TITLE_W) / 2
+    tb = thumb_slide.shapes.add_textbox(left, Inches(0.2), TITLE_W, Inches(0.6))
+    p  = tb.text_frame.paragraphs[0]
+    run = p.add_run()
+    run.text = location_name
+    p.alignment  = PP_ALIGN.CENTER
+    run.font.name = "YuGothic"
+    run.font.size = Pt(24)
+
+    # サムネイル画像を中央に縮小表示（幅を60%に）
+    thumbs = list(st.session_state["thumbs_data"].values())
+    if thumbs:
+        img   = thumbs[0]
+        pic_w = prs.slide_width * 0.6
+        pic_h = pic_w * img.height / img.width
+        left  = (prs.slide_width - pic_w) / 2
+        top   = (prs.slide_height - pic_h) / 2 + Inches(0.2)
+        buf = io.BytesIO()
+        img.save(buf, format=img.format or "PNG")
+        buf.seek(0)
+        thumb_slide.shapes.add_picture(buf, left, top, width=pic_w, height=pic_h)
+
+    # --- 2枚目：メタデータスライド ---
+    meta_slide = prs.slides.add_slide(blank_layout)
+
+    # (A) タイトル「ロケ地情報」
+    META_TITLE_W = Inches(10)
+    left_title   = (prs.slide_width - META_TITLE_W) / 2
+    tb_meta_title = meta_slide.shapes.add_textbox(
+        left_title, Inches(0.2), META_TITLE_W, Inches(0.6)
     )
-    tf_loc = tb_loc.text_frame
-    p_loc = tf_loc.paragraphs[0]
-    run_loc = p_loc.add_run()
-    run_loc.text = location_name
-    p_loc.alignment = PP_ALIGN.CENTER
-    run_loc.font.name = "YuGothic"
-    run_loc.font.size = LOC_FONT
+    p_title = tb_meta_title.text_frame.paragraphs[0]
+    run_title = p_title.add_run()
+    run_title.text = "ロケ地情報"
+    p_title.alignment = PP_ALIGN.CENTER
+    run_title.font.name = "YuGothic"
+    run_title.font.size = Pt(24)
 
-    # (2) 住所と件数テーブル
-    rows = 2 + len(categories)
-    tbl = summary.shapes.add_table(
-        rows, 2,
-        Inches(1), Inches(1.3),  # ロケ地名下に配置
-        Inches(8), Inches(0.8 * rows)
-    ).table
+    # すべてのフィールドをリストに
+    fields = [
+        ("ロケ地名",       location_name),
+        ("住所",           address),
+        ("HPリンク",       hp_link),
+        ("大分類",         cat_main_val),
+        ("小分類",         cat_sub_val),
+        ("交通機関情報",   transport_info),
+        ("面積[m²]",       area_val),
+        ("天高[cm]",       ceiling_val),
+        ("担当者名",       contact_person),
+        ("電話番号",       phone1),
+        ("メールアドレス",  contact_email),
+        ("金額/day",       price_day),
+        ("金額/h",         price_hour),
+        ("金額備考",       price_note),
+        ("24時間可",       open_24h),
+        ("開始時間",       start_time.strftime("%H:%M")),
+        ("終了時間",       end_time.strftime("%H:%M")),
+        *[(k, detail_values[k]) for k in detail_values],
+        ("人数指定",       specify_num),
+        ("最大人数",       max_number),
+        ("上限なし",       unlimited),
+        ("不明(人数)",     unknown_count),
+        ("支払い方法",     payment),
+        ("支払い備考",     pay_note),
+        ("作品番号",       work_no),
+        ("担当者 PM",      pm_person),
+        ("担当者 P",       p_person),
+        ("コーディネーター", coordinator),
+    ]
 
-    # ヘッダー行とデータ行のフォントサイズを後から設定
-    tbl.cell(0, 0).text = "住所"
-    tbl.cell(0, 1).text = address
-    for i, (label, key, _) in enumerate(categories, start=1):
-        tbl.cell(i, 0).text = label
-        tbl.cell(i, 1).text = str(len(st.session_state[f"{key}_data"]))
+    # 2分割
+    mid = len(fields) // 2
+    left_fields  = fields[:mid]
+    right_fields = fields[mid:]
 
-    # 表フォントサイズ調整
-    for row in tbl.rows:
-        for cell in row.cells:
-            for paragraph in cell.text_frame.paragraphs:
-                for run in paragraph.runs:
-                    run.font.size = TABLE_FONT
-                    run.font.name = "YuGothic"
+    # 各コラムの基本設定
+    #margin_x  = Inches(0.7)
+    #half_w    = (prs.slide_width - margin_x*2) / 2
+    #label_w   = Inches(2.5)   # 左コラムはメールアドレスに合わせて広め
+    #value_w   = half_w - label_w - Inches(0.2)
+    #row_h     = Inches(0.25)  # 行間
+    #start_y   = Inches(0.5)
 
-    # --- 画像スライド ---
+    # ↓↓ ここから調整可能 ↓↓
+    # 項目のY開始位置を0.2→1.0インチに下げてタイトルと被らなくする
+    start_y   = Inches(1.0)
+
+    # 左右マージン
+    margin_x  = Inches(0.7)
+    # コラム幅（左右で均等）
+    half_w    = (prs.slide_width - margin_x*2) / 2
+    # 左コラム：ラベル幅を2.5→2.2インチに少し狭く
+    label_w   = Inches(2.0)
+    # 値幅は自動計算
+    value_w   = half_w - label_w - Inches(0.1)
+    # 行の高さ（行間）は0.25→0.3インチに調整
+    row_h     = Inches(0.3)
+    # ↑↑ ここまで調整可能 ↑↑
+
+
+    # 左コラム
+    for i, (label, val) in enumerate(left_fields):
+        y = start_y + row_h * i
+        # ラベル
+        tb_lab = meta_slide.shapes.add_textbox(margin_x, y, label_w, row_h)
+        p_lab  = tb_lab.text_frame.paragraphs[0]
+        p_lab.text = label
+        p_lab.font.name = "YuGothic"
+        p_lab.font.size = Pt(10)
+        # 値
+        tb_val = meta_slide.shapes.add_textbox(
+            margin_x + label_w + Inches(0.1), y, value_w, row_h
+        )
+        p_val  = tb_val.text_frame.paragraphs[0]
+        p_val.text = str(val)
+        p_val.font.name = "YuGothic"
+        p_val.font.size = Pt(10)
+
+    # 右コラム（Coordinator に合わせてラベル幅設定）
+    label_w_r = Inches(1.8)
+    value_w_r = half_w - label_w_r - Inches(0.2)
+    for i, (label, val) in enumerate(right_fields):
+        y = start_y + row_h * i
+        x0 = margin_x + half_w
+        tb_lab = meta_slide.shapes.add_textbox(x0, y, label_w_r, row_h)
+        p_lab  = tb_lab.text_frame.paragraphs[0]
+        p_lab.text = f"{label}"
+        p_lab.font.name = "YuGothic"
+        p_lab.font.size = Pt(10)
+        tb_val = meta_slide.shapes.add_textbox(x0 + label_w_r + Inches(0.1), y, value_w_r, row_h)
+        p_val  = tb_val.text_frame.paragraphs[0]
+        p_val.text = f"{val}"
+        p_val.font.name = "YuGothic"
+        p_val.font.size = Pt(10)
+
+    # --- 3枚目以降：その他カテゴリの画像スライド（省略せず従来どおり） ---
     for label, key, _ in categories:
-        selected = [
-            img for name, img in st.session_state[f"{key}_data"].items()
+        if key == "thumbs":
+            continue
+        imgs = [
+            img for name,img in st.session_state[f"{key}_data"].items()
             if st.session_state[f"{key}_include"][name]
         ]
-        if not selected:
+        if not imgs:
             continue
 
-        for i in range(0, len(selected), PPT_PER_SLIDE):
-            chunk = selected[i:i + PPT_PER_SLIDE]
-            slide = prs.slides.add_slide(prs.slide_layouts[5])
+        for i in range(0, len(imgs), PPT_PER_SLIDE):
+            chunk = imgs[i:i + PPT_PER_SLIDE]
+            slide = prs.slides.add_slide(blank_layout)
 
-            # (1) カテゴリ名：左寄せ・小めの見出し
+            # カテゴリ見出し
             tb_cat = slide.shapes.add_textbox(
                 Inches(0.5), Inches(0.3),
                 Inches(3), Inches(0.5)
             )
-            tf_cat = tb_cat.text_frame
-            p_cat = tf_cat.paragraphs[0]
-            run_cat = p_cat.add_run()
+            p_cat    = tb_cat.text_frame.paragraphs[0]
+            run_cat  = p_cat.add_run()
             run_cat.text = label
             p_cat.alignment = PP_ALIGN.LEFT
             run_cat.font.name = "YuGothic"
             run_cat.font.size = HEADING_FONT
 
-            # (2) ロケ地名：中央寄せ
-            tb_cat_loc = slide.shapes.add_textbox(
-                Inches(3.5), Inches(0.3),
-                prs.slide_width - Inches(4), Inches(0.5)
-            )
-            tf_cat_loc = tb_cat_loc.text_frame
-            p_cat_loc = tf_cat_loc.paragraphs[0]
-            run_cat_loc = p_cat_loc.add_run()
-            run_cat_loc.text = location_name
-            p_cat_loc.alignment = PP_ALIGN.CENTER
-            run_cat_loc.font.name = "YuGothic"
-            run_cat_loc.font.size = HEADING_FONT
+            # ロケ地名
+            TEXT_W = Inches(10)
+            LEFT   = (prs.slide_width - TEXT_W) / 2
+            tb_loc2 = slide.shapes.add_textbox(LEFT, Inches(0.3), TEXT_W, Inches(0.5))
+            p_loc2  = tb_loc2.text_frame.paragraphs[0]
+            run_loc2= p_loc2.add_run()
+            run_loc2.text = location_name
+            p_loc2.alignment = PP_ALIGN.CENTER
+            run_loc2.font.name = "YuGothic"
+            run_loc2.font.size = HEADING_FONT
 
-            # (3) 画像グリッド配置（省略）
+            # 画像グリッド…
             usable_w = prs.slide_width - Inches(1)
             usable_h = prs.slide_height - Inches(1.5)
             gap_w, gap_h = Inches(0.2), Inches(0.2)
-            cell_w = (usable_w - gap_w * (PPT_COLS - 1)) / PPT_COLS
-            cell_h = (usable_h - gap_h * (PPT_ROWS - 1)) / PPT_ROWS
+            cell_w = (usable_w - gap_w*(PPT_COLS-1)) / PPT_COLS
+            cell_h = (usable_h - gap_h*(PPT_ROWS-1)) / PPT_ROWS
             left_m, top_m = Inches(0.5), Inches(1.5)
 
             for idx, img in enumerate(chunk):
                 r, c = divmod(idx, PPT_COLS)
-                x = left_m + c * (cell_w + gap_w)
-                y = top_m + r * (cell_h + gap_h)
+                x = left_m + c*(cell_w+gap_w)
+                y = top_m + r*(cell_h+gap_h)
                 ow, oh = img.size
-                ratio, cell_ratio = ow / oh, cell_w / cell_h
+                ratio, cell_ratio = ow/oh, cell_w/cell_h
                 if ratio > cell_ratio:
-                    pw, ph = cell_w, cell_w / ratio
+                    pw, ph = cell_w, cell_w/ratio
                 else:
-                    ph, pw = cell_h, cell_h * ratio
-                px = x + (cell_w - pw) / 2
-                py = y + (cell_h - ph) / 2
-
-                if pw < cell_w or ph < cell_h:
-                    bg = slide.shapes.add_shape(
-                        MSO_SHAPE.RECTANGLE, x, y, cell_w, cell_h
-                    )
-                    bg.fill.solid()
-                    bg.fill.fore_color.rgb = RGBColor(0, 0, 0)
-                    bg.line.fill.background()
-
+                    ph, pw = cell_h, cell_h*ratio
+                px = x + (cell_w-pw)/2
+                py = y + (cell_h-ph)/2
+                #if pw<cell_w or ph<cell_h:
+                #    bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, y, cell_w, cell_h)
+                #    bg.fill.solid()
+                #    bg.fill.fore_color.rgb = RGBColor(255,255,255)
+                #    bg.line.fill.background()
                 buf = io.BytesIO()
                 img.save(buf, format=img.format or "PNG")
                 buf.seek(0)
                 slide.shapes.add_picture(buf, px, py, width=pw, height=ph)
 
-    # 保存＆ダウンロード準備
+    # 保存＆ストア
     out = io.BytesIO()
     prs.save(out)
     out.seek(0)
     st.session_state['pptx_bytes'] = out.getvalue()
 
-# --- ダウンロードボタン ---
+# --- ダウンロードボタン（ifブロック外） ---
 if 'pptx_bytes' in st.session_state:
     st.download_button(
         "📥 PPTXをダウンロード",
