@@ -1,6 +1,7 @@
 # app.py
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import io
 from pptx import Presentation
@@ -11,6 +12,57 @@ import datetime
 from uuid import uuid4
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.dml.color import RGBColor
+
+st.set_page_config(page_title="Location Uploader & PPTX Export", layout="wide")
+
+
+# --- 追加：JSで画面幅をクエリにセット ---
+components.html(
+    """
+    <script>
+      const w = window.innerWidth;
+      const url = new URL(window.location);
+      url.searchParams.set("screen_width", w);
+      window.history.replaceState(null, '', url);
+    </script>
+    """,
+    height=0,
+)
+
+
+# クエリから画面幅を読み込み（初回は0なのでPC用5列をデフォルト）
+params   = st.query_params
+screen_w = int(params.get("screen_width", ["0"])[0])
+
+
+# スマホ基準を768pxとし、それ以下なら2列、超なら5列
+PREVIEW_COLS     = 2 if screen_w < 768 else 5
+PREVIEW_ROWS     = 2
+PREVIEW_PER_PAGE = PREVIEW_COLS * PREVIEW_ROWS
+
+# --- 全体のCSS調整 ---
+# ③ クエリパラメータ取得
+params = st.query_params
+screen_w = int(params.get("screen_width", [0])[0])
+
+# 以下は前回と同じレスポンシブ設定
+# スマホ基準を768pxとし、それ以下なら2列、超なら5列
+PREVIEW_COLS     = 2 if screen_w < 768 else 5
+PREVIEW_ROWS     = 2
+PREVIEW_PER_PAGE = PREVIEW_COLS * PREVIEW_ROWS
+
+# 全体のCSS調整
+st.markdown(
+    f"""
+    <style>
+    img {{ width:100% !important; height:auto !important; }}
+    .stCheckbox label {{ font-size: 0.9em; }}
+    .stDownloadButton button {{ font-size: 0.9em; padding: 0.4em 0.8em; }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 
 # --- 定義しておく ---
@@ -34,8 +86,8 @@ detail_opts = [
     "電源の有無","駐車場の有無","特機の使用可否","スモークの使用可否","火器の使用可否",
 ]
 
-st.set_page_config(page_title="Location Uploader & PPTX Export", layout="wide")
-st.title("📍 ロケ地情報入力＆エクセル／画像→PowerPoint")
+
+st.title("📍 ロケ地Info・資料出力アプリ")
 
 # --- 1. 基本情報 ---
 st.header("1. ロケ地基本情報")
@@ -212,6 +264,7 @@ PREVIEW_PER_PAGE = PREVIEW_COLS * PREVIEW_ROWS
 PADDING = 5
 
 # --- カテゴリ定義 ---
+# --- 6. 画像アップロード & Preview ---
 categories = [
     ("サムネイル", "thumbs", False),
     ("ロケ地写真", "photos", True),
@@ -221,27 +274,34 @@ categories = [
     ("ロケ地MAP", "map_img", True),
 ]
 
-# --- セッションステート初期化 ---
+def display_image(img, **kwargs):
+    """
+    Streamlit のバージョン差異を吸収して画像表示。
+    kwargs に use_container_width=True などを渡せば
+    存在する方の引数で呼び出します。
+    """
+    try:
+        st.image(img, **kwargs)
+    except TypeError:
+        # 新 API に use_container_width がない場合はこちら
+        # kwargs の中に use_container_width があれば削除して再試行
+        fallback = kwargs.copy()
+        fallback.pop("use_container_width", None)
+        st.image(img, **fallback)
+
+# セッション初期化（省略）
 for _, key, _ in categories:
     st.session_state.setdefault(f"{key}_data", {})
     st.session_state.setdefault(f"{key}_include", {})
     st.session_state.setdefault(f"{key}_page", 1)
     st.session_state.setdefault(f"{key}_ctr", 0)
 
-
-
-
-# --- 画像アップロード＆プレビュー ---
 for label, key, multi in categories:
     data = st.session_state[f"{key}_data"]
     ctr = st.session_state[f"{key}_ctr"]
-    uploader_key = f"upl_{key}_{ctr}"
-    uploaded = st.file_uploader(
-        label,
-        type=["png", "jpg", "jpeg"],
-        accept_multiple_files=multi,
-        key=uploader_key
-    )
+    uploaded = st.file_uploader(label, type=["png","jpg","jpeg"],
+                                accept_multiple_files=multi,
+                                key=f"upl_{key}_{ctr}")
     files = uploaded if isinstance(uploaded, list) else ([uploaded] if uploaded else [])
     if files:
         for f in files:
@@ -252,56 +312,59 @@ for label, key, multi in categories:
         st.rerun()
 
     items = list(data.items())
-    n = len(items)
-    if n == 0:
+    if not items:
         continue
 
-    page_key = f"{key}_page"
-    total_pages = (n + PREVIEW_PER_PAGE - 1) // PREVIEW_PER_PAGE
-    st.session_state[page_key] = max(1, min(st.session_state[page_key], total_pages))
-    page = st.session_state[page_key]
+    # ページ計算
+    total_pages = (len(items) + PREVIEW_PER_PAGE - 1) // PREVIEW_PER_PAGE
+    page = st.session_state[f"{key}_page"]
+    page = max(1, min(page, total_pages))
+    st.session_state[f"{key}_page"] = page
 
-    start = (page - 1) * PREVIEW_PER_PAGE
-    chunk = items[start:start + PREVIEW_PER_PAGE]
-
+    # プレビュー表示
     st.markdown(
         f"<div style='border:1px solid #ddd; padding:{PADDING}px; margin-bottom:{PADDING}px; max-height:400px; overflow-y:auto;'>",
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
     cols_ui = st.columns(PREVIEW_COLS)
-    for idx, (name, img) in enumerate(chunk):
-        with cols_ui[idx % PREVIEW_COLS]:
-            st.image(img, use_column_width=True)
-            c1, c2 = st.columns([4, 1])
+    start = (page - 1) * PREVIEW_PER_PAGE
+    for idx, (name, img) in enumerate(items[start:start + PREVIEW_PER_PAGE]):
+        col = cols_ui[idx % PREVIEW_COLS]
+        with col:
+            # ここが修正ポイント：use_container_width を使う
+            #st.image(img, use_container_width=True)
+            display_image(img, use_container_width=True)
+
+
+            c1, c2 = st.columns([4,1])
             with c1:
-                inc = st.checkbox(
-                    "資料出力",
-                    key=f"inc_{key}_{name}",
-                    value=st.session_state[f"{key}_include"][name]
-                )
+                inc = st.checkbox("資料出力",
+                                  key=f"inc_{key}_{name}",
+                                  value=st.session_state[f"{key}_include"][name])
                 st.session_state[f"{key}_include"][name] = inc
             with c2:
                 if st.button("❌", key=f"del_{key}_{name}"):
                     data.pop(name)
                     st.session_state[f"{key}_include"].pop(name, None)
+                    # ページ再計算＆リラン
                     new_n = len(data)
-                    new_total = max(1, (new_n + PREVIEW_PER_PAGE - 1) // PREVIEW_PER_PAGE)
-                    st.session_state[page_key] = min(page, new_total)
+                    new_total = max(1, (new_n + PREVIEW_PER_PAGE - 1)//PREVIEW_PER_PAGE)
+                    st.session_state[f"{key}_page"] = min(page, new_total)
                     st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
+    # ページナビ
     if total_pages > 1:
-        options = [str(i) for i in range(1, total_pages + 1)]
         sel = st.radio(
-            label=f"ページ ({page}/{total_pages})",
-            options=options,
-            index=page - 1,
+            f"ページ ({page}/{total_pages})",
+            [str(i) for i in range(1, total_pages+1)],
+            index=page-1,
             horizontal=True,
             key=f"nav_{key}"
         )
         new_page = int(sel)
         if new_page != page:
-            st.session_state[page_key] = new_page
+            st.session_state[f"{key}_page"] = new_page
             st.rerun()
 
 # --- PPTX 生成＆ダウンロード ---
